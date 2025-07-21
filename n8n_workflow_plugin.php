@@ -139,7 +139,7 @@ function sermon_generated_content_page() {
 
     echo '<div class="wrap"><h1>Generated Content</h1>';
 
-    // CSS for truncation + modal styling
+    // CSS for truncation + modal styling of excerpt
     echo '<style>
         .wp-list-table td {
             max-width: 250px;
@@ -200,9 +200,13 @@ function sermon_generated_content_page() {
         foreach ($rows as $row) {
             $status_class = strtolower($row->approval_status);
             $safe_excerpt = esc_html($row->excerpt);
+            $link = esc_url($row->link);
+            $content_type = esc_html($row->content_type);
             echo "<tr data-id='{$row->id}'>
-                    <td>" . esc_html($row->title) . "</td>
+                    <td class='sermon-title'>" . esc_html($row->title) . "</td>
                     <td class='excerpt-cell' data-full=\"{$safe_excerpt}\">{$safe_excerpt}</td>
+                    <td class='{$link}'>" {$link} "</td>
+                    <td class='{$content_type}'>" {$content_type} "</td>
                     <td class='{$status_class}'>" . esc_html($row->approval_status) . "</td>
                     <td>
                         <button class='button approve-btn'>Approve</button>
@@ -247,6 +251,7 @@ function sermon_generated_content_page() {
                     const row = this.closest('tr');
                     const id = row.dataset.id;
                     const action = this.classList.contains('approve-btn') ? 'approve' : 'reject';
+                    const title = row.querySelector('.sermon-title').textContent.trim();
 
                     fetch(ajaxurl, {
                         method: 'POST',
@@ -254,16 +259,20 @@ function sermon_generated_content_page() {
                         body: new URLSearchParams({
                             action: 'sermon_content_approval',
                             sermon_id: id,
+                            sermon_title: title,
                             approval_action: action,
                             _wpnonce: '<?php echo wp_create_nonce("sermon_approve_nonce"); ?>'
                         })
                     })
                     .then(res => res.json())
                     .then(data => {
+
                         if (data.success) {
                             const statusCell = row.querySelector('td:nth-child(3)');
                             statusCell.textContent = data.status;
                             statusCell.className = data.status.toLowerCase();
+                            location.reload(); // Reload to reflect changes
+
                         } else {
                             alert("Error: " + data.data.message);
                         }
@@ -283,10 +292,13 @@ function handle_sermon_content_approval() {
     check_ajax_referer('sermon_approve_nonce');
 
     global $wpdb;
+
     $id = intval($_POST['sermon_id']);
+    $title = sanitize_text_field($_POST['sermon_title'] ?? '');
     $action = sanitize_text_field($_POST['approval_action']);
     $status = $action === 'approve' ? 'Approved' : 'Rejected';
 
+    // Update approval status by ID in custom table (same as before)
     $updated = $wpdb->update(
         $wpdb->prefix . 'sermon_generated',
         ['approval_status' => $status],
@@ -295,12 +307,26 @@ function handle_sermon_content_approval() {
         ['%d']
     );
 
-    if ($updated !== false) {
-        wp_send_json_success(['status' => $status]);
-    } else {
+    if ($updated === false) {
         wp_send_json_error(['message' => 'Update failed.']);
+        return;
     }
+
+    // Publish the post by title if approved
+    if ($status === 'Approved' && !empty($title)) {
+        $post = get_page_by_title($title, OBJECT, 'post'); // Change 'post' if custom post type
+
+        if ($post && $post->post_status !== 'publish') {
+            wp_update_post([
+                'ID' => $post->ID,
+                'post_status' => 'publish'
+            ]);
+        }
+    }
+
+    wp_send_json_success(['status' => $status]);
 }
+
 
 // 5. Create the custom table on plugin activation
 register_activation_hook(__FILE__, 'create_sermon_generated_table');
@@ -314,8 +340,11 @@ function create_sermon_generated_table() {
         id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         title TEXT NOT NULL,
         excerpt TEXT NOT NULL,
-        approval_status VARCHAR(50) NOT NULL DEFAULT 'Pending',
+        approval_status ENUM('Pending', 'Approved', 'Rejected') NOT NULL DEFAULT 'Pending'
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        content_type ENUM('facebook_post', 'wp_blog_post', 'church_content_sermon_transcript') NOT NULL DEFAULT 'wp_blog_post',
+        link TEXT NOT NULL,
         PRIMARY KEY  (id)
     ) $charset_collate;";
 
@@ -370,7 +399,7 @@ function sermon_create_generated_entry($request) {
 
     // 2. Validate input
     if (empty($params['title']) || empty($params['excerpt']) || empty($params['link'])) {
-        return new WP_REST_Response(['error' => 'Missing title or excerpt'], 400);
+        return new WP_REST_Response(['error' => 'Missing title, excerpt, or link'], 400);
     }
 
     global $wpdb;
