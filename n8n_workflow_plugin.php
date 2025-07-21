@@ -205,8 +205,8 @@ function sermon_generated_content_page() {
             echo "<tr data-id='{$row->id}'>
                     <td class='sermon-title'>" . esc_html($row->title) . "</td>
                     <td class='excerpt-cell' data-full=\"{$safe_excerpt}\">{$safe_excerpt}</td>
-                    <td class='{$link}'>" {$link} "</td>
-                    <td class='{$content_type}'>" {$content_type} "</td>
+                    <td class='{$link}'> {$link} </td>
+                    <td class='{$content_type}'> {$content_type} </td>
                     <td class='{$status_class}'>" . esc_html($row->approval_status) . "</td>
                     <td>
                         <button class='button approve-btn'>Approve</button>
